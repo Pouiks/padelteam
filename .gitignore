@@ -1,0 +1,17 @@
+node_modules/
+.next/
+out/
+.vercel/
+.env
+.env*.local
+*.tsbuildinfo
+next-env.d.ts
+
+# Données locales (mode fichiers, hors Vercel)
+data/current.json
+data/version.json
+data/push.json
+data/*.tmp
+data/*.corrompu-*
+data/archive/*
+!data/archive/.gitkeep

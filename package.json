@@ -1,0 +1,32 @@
+{
+  "name": "vestiaire",
+  "version": "1.0.0",
+  "description": "PWA pour organiser des matchs entre collègues avec des équipes équilibrées (Next.js, déployable sur Vercel)",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start -H 0.0.0.0 -p ${PORT:-3000}",
+    "test": "node --test test/balance.test.ts test/bracket.test.ts test/store.test.ts",
+    "vapid": "node scripts/vapid.js",
+    "icons": "node scripts/make-icons.js"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@upstash/redis": "^1.38.4",
+    "next": "^16.3.5",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/web-push": "^3.6.4",
+    "typescript": "^5.9.0"
+  }
+}
