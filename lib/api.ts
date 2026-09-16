@@ -5,14 +5,18 @@
 import { NextResponse } from 'next/server';
 import type { MatchEvent, State } from './types.ts';
 import {
+  DEFAULT_COURTS,
+  MAX_COURTS,
   MAX_LEVEL,
   MAX_NAME_LENGTH,
   MAX_SCORE,
   MAX_TEAM_SIZE,
   MAX_TITLE_LENGTH,
+  MIN_COURTS,
   MIN_TEAM_SIZE,
 } from './constants.ts';
 import { ConflictError } from './store.ts';
+import { StorageError } from './db.ts';
 import { BalanceError } from './balance.ts';
 import { BracketError } from './bracket.ts';
 
@@ -52,6 +56,8 @@ export async function handle(fn: () => Promise<Response>): Promise<Response> {
       return json({ error: err.message }, { status: 400 });
     }
     if (err instanceof ConflictError) return json({ error: err.message }, { status: 409 });
+    // Stockage absent : message explicite plutôt qu'une perte de données muette.
+    if (err instanceof StorageError) return json({ error: err.message }, { status: 503 });
     console.error('[vestiaire] erreur interne', err);
     return json({ error: 'Erreur interne du serveur.' }, { status: 500 });
   }
@@ -109,6 +115,16 @@ export function cleanTeamSize(value: unknown): number {
     return bad(`Le nombre de joueurs par équipe doit être un entier entre ${MIN_TEAM_SIZE} et ${MAX_TEAM_SIZE}.`);
   }
   return size;
+}
+
+/** Nombre de terrains, facultatif : 2 par défaut. */
+export function cleanCourts(value: unknown): number {
+  if (value === undefined || value === null || value === '') return DEFAULT_COURTS;
+  const courts = toInt(value);
+  if (courts === null || courts < MIN_COURTS || courts > MAX_COURTS) {
+    return bad(`Le nombre de terrains doit être un entier entre ${MIN_COURTS} et ${MAX_COURTS}.`);
+  }
+  return courts;
 }
 
 /** Titre facultatif : null si vide. */

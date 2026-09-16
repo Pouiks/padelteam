@@ -15,7 +15,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
       event.status = 'open';
       event.teams = [];
       event.subs = [];
-      event.rounds = [];
+      event.matches = [];
       event.winner = null;
     });
     return json({ ok: true, state });

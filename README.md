@@ -90,15 +90,60 @@ cycle démarre. Les joueurs ne sont jamais effacés.
 5. Ordre des équipes tiré au sort, noms : Rouges, Bleus, Verts, Jaunes, Noirs,
    Blancs, Orange, Violets, Gris, Roses, Cyan, Bruns.
 
-### Tableau (`lib/bracket.ts`)
+### Tournoi à double élimination (`lib/bracket.ts`)
 
-Puissance de 2 supérieure ou égale au nombre d'équipes, exempts répartis un par
-rencontre et dispersés dans le tableau, avancement automatique dès qu'un tour est
-complet. Une fois les équipes tirées, chacun voit toutes les rencontres et la sienne
-en tête de fiche (« Mon match ») : il suffit d'appuyer sur l'équipe qui a gagné, le
-score est facultatif. Le tour suivant se remplit tout seul jusqu'à la finale.
-Égalités interdites ; corriger un résultat qui change un vainqueur efface et
-recalcule les tours suivants.
+Personne ne sort sur une seule défaite : l'équipe battue dans le **tableau des
+gagnants** bascule dans le **tableau des perdants**, et n'est éliminée qu'à sa
+deuxième défaite. Les vainqueurs des deux tableaux se retrouvent en **grande
+finale** ; si l'équipe venue des perdants la gagne, chacune compte une défaite et
+une **revanche** les départage.
+
+À 8 joueurs en équipes de 2, sur 2 terrains :
+
+```
+tour 1   terrain 1 : gagnants A–B      terrain 2 : gagnants C–D
+tour 2   terrain 1 : finale gagnants   terrain 2 : perdants (battus du tour 1)
+tour 3   finale des perdants
+tour 4   grande finale (+ revanche éventuelle)
+```
+
+Le tableau est un graphe construit au lancement : chaque rencontre dit où chercher
+ses deux équipes (tirage, vainqueur ou perdant d'une autre rencontre, place vide
+pour un exempt). Seuls les résultats déclarés sont stockés ; qui joue, qui attend,
+qui est éliminé et le classement se recalculent. Fonctionne pour n'importe quel
+nombre d'équipes (exempts dispersés, pas de revanche immédiate à l'arrivée chez les
+perdants).
+
+**Terrains** : une rencontre prête reçoit le premier terrain libre et le garde
+jusqu'à son résultat — personne ne change de terrain parce qu'un autre match s'est
+terminé. S'il y a plus de rencontres prêtes que de terrains, elles attendent.
+
+**Ce que voit chacun** : en tête de fiche, son équipe (« À vous ! Terrain 2 contre
+les Bleus », « Prochain match contre le vainqueur de Rouges – Jaunes », « Éliminés —
+3e place »). Dès que cette situation change — y compris quand c'est une autre équipe
+qui a déclaré le résultat — un message le prévient, quel que soit l'écran affiché.
+N'importe qui peut déclarer un résultat d'un geste, score facultatif. Égalités
+interdites ; corriger un vainqueur efface ce qui en dépendait.
+
+Un match lancé avant ce format (ancien tableau à élimination simple) revient aux
+inscriptions, inscrits conservés ; les archives gardent leur format d'origine.
+
+### Identité et session
+
+Pas de compte ni de mot de passe : chaque appareil porte un identifiant de joueur.
+Il est conservé à deux endroits, pour qu'en perdre un ne déconnecte personne :
+
+- un **cookie** `vestiaire_pid` posé par le serveur (`HttpOnly`, `SameSite=Lax`,
+  400 jours), reposé à chaque appel de `/api/state` ;
+- le **localStorage** du navigateur, envoyé en paramètre `device` et utilisé pour
+  recréer le cookie s'il a disparu.
+
+Le serveur tranche (`lib/session.ts`) et renvoie `me` dans `/api/state`. Si les deux
+ont disparu — Safari purge le stockage écrit par script, les navigateurs intégrés à
+WhatsApp ou Instagram ont leur propre bac à sable, la navigation privée repart de
+zéro — l'écran d'accueil propose de **reprendre sa place** dans la liste des joueurs
+(`POST /api/session`), ce qui récupère le profil *et* les inscriptions en cours plutôt
+que de créer un doublon.
 
 ### Temps réel
 
@@ -118,12 +163,14 @@ est rejouée sur l'état à jour.
 
 | Méthode | Route                     | Corps / réponse                                      |
 | ------- | ------------------------- | ---------------------------------------------------- |
-| GET     | `/api/state?v=`           | `{version, cycle, players, events}` ou `{unchanged}` |
+| GET     | `/api/state?v=&device=`   | `{version, cycle, players, events, me}` ou `{unchanged, me}` |
+| POST    | `/api/session`            | `{playerId}` — rattache cet appareil à un joueur existant |
+| DELETE  | `/api/session`            | oublie le joueur sur cet appareil                    |
 | PUT     | `/api/players/:id`        | `{name, level}` (niveau 0–6, prénom ≤ 30 car.)       |
-| POST    | `/api/events`             | `{title?, teamSize, join, playerId}`                 |
+| POST    | `/api/events`             | `{title?, teamSize, courts?, join, playerId}`        |
 | POST    | `/api/events/:id/join`    | `{playerId}` (bascule)                               |
-| POST    | `/api/events/:id/launch`  | forme équipes + tableau                              |
-| POST    | `/api/events/:id/result`  | `{round, match, winner?, sa?, sb?}` (vainqueur et/ou score) |
+| POST    | `/api/events/:id/launch`  | forme équipes + tableau à double élimination         |
+| POST    | `/api/events/:id/result`  | `{match, winner?, sa?, sb?}` (index de rencontre ; vainqueur et/ou score) |
 | POST    | `/api/events/:id/reopen`  | rouvre les inscriptions                              |
 | DELETE  | `/api/events/:id`         |                                                      |
 | GET     | `/api/archive`            | `[{id, startedAt, endedAt, events: [...]}]`          |

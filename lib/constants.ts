@@ -18,6 +18,10 @@ export const MAX_TITLE_LENGTH = 60;
 export const MIN_TEAM_SIZE = 1;
 export const MAX_TEAM_SIZE = 11;
 export const MAX_SCORE = 999;
+export const MIN_COURTS = 1;
+export const MAX_COURTS = 8;
+/** En padel à 8 : deux terrains, les quatre équipes jouent en même temps. */
+export const DEFAULT_COURTS = 2;
 
 export const STATUS_LABELS: Record<EventStatus, string> = {
   open: 'Inscriptions ouvertes',

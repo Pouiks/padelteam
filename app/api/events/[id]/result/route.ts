@@ -1,8 +1,8 @@
 /**
- * POST /api/events/:id/result  { round, match, winner?, sa?, sb? }
- * Déclare ou corrige le résultat d'une rencontre : `winner` est l'index de
- * l'équipe gagnante ; le score est facultatif (et suffit à lui seul).
- * Les tours suivants sont recalculés.
+ * POST /api/events/:id/result  { match, winner?, sa?, sb? }
+ * Déclare ou corrige le résultat d'une rencontre : `match` est son index dans
+ * le tableau, `winner` l'index de l'équipe gagnante ; le score est facultatif
+ * (et suffit à lui seul). La suite du tableau et les terrains sont recalculés.
  */
 import { getStore } from '@/lib/db';
 import { setResult } from '@/lib/bracket';
@@ -18,7 +18,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const { id: rawId } = await ctx.params;
     const id = cleanId(rawId, 'de match');
     const body = await readJson(req);
-    const round = cleanIndex(body.round, 'de tour');
     const match = cleanIndex(body.match, 'de rencontre');
     const winner =
       body.winner === undefined || body.winner === null ? null : cleanIndex(body.winner, 'd’équipe gagnante');
@@ -26,7 +25,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const sb = optionalScore(body.sb, 'de la seconde équipe');
 
     const { state } = await getStore().mutate((s) => {
-      setResult(getEvent(s, id), round, match, { winner, sa, sb });
+      setResult(getEvent(s, id), match, { winner, sa, sb });
     });
     return json({ ok: true, state });
   });

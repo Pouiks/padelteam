@@ -19,14 +19,15 @@ function clock(start: number) {
 function sampleEvent(): MatchEvent {
   return {
     title: 'Foot jeudi',
-    teamSize: 5,
+    teamSize: 2,
+    courts: 2,
     createdBy: 'a',
     createdAt: new Date(T0).toISOString(),
     status: 'open',
     participants: [],
     teams: [],
     subs: [],
-    rounds: [],
+    matches: [],
     winner: null,
   };
 }
@@ -140,6 +141,42 @@ test('conflit d’écriture : la mutation est rejouée sur l’état à jour', a
   assert.equal(applied, 2, 'la fonction a été rejouée');
   assert.equal(state.version, 3);
   assert.deepEqual(Object.keys(state.players).sort(), ['a', 'b', 'c']);
+});
+
+test('un match lancé avec l’ancien tableau revient aux inscriptions, inscrits conservés', async () => {
+  const kv = new MemoryKV();
+  const inscrits = [
+    { id: 'a', name: 'Camille', level: 3 },
+    { id: 'b', name: 'Léa', level: 5 },
+  ];
+  const legacy = {
+    cycle: { id: 'c-1', startedAt: new Date(T0).toISOString() },
+    players: {},
+    events: {
+      ancien: {
+        ...sampleEvent(),
+        courts: undefined,
+        matches: undefined,
+        status: 'running',
+        participants: inscrits,
+        teams: [{ name: 'Rouges', members: inscrits }],
+        rounds: [[{ a: 0, b: 1, winner: null, sa: null, sb: null }]],
+      },
+      neuf: { ...sampleEvent(), courts: 3 },
+    },
+  };
+  await kv.set('vestiaire:current', JSON.stringify(legacy));
+  await kv.set('vestiaire:version', '7');
+
+  const state = await new Store(kv, () => T0 + 1000).getState();
+  const ancien = state.events.ancien as MatchEvent & { rounds?: unknown };
+  assert.equal(ancien.status, 'open');
+  assert.deepEqual(ancien.participants, inscrits, 'personne ne perd son inscription');
+  assert.deepEqual(ancien.teams, []);
+  assert.deepEqual(ancien.matches, []);
+  assert.equal(ancien.courts, 2, 'deux terrains par défaut');
+  assert.equal('rounds' in ancien, false);
+  assert.equal(state.events.neuf.courts, 3, 'un match au bon format est laissé tel quel');
 });
 
 test('abonnements push : ajout, lecture, suppression', async () => {

@@ -7,10 +7,18 @@
  * chaud du serveur de développement Next.js.
  */
 import path from 'node:path';
-import os from 'node:os';
 import { FileKV } from './kv.ts';
 import { upstashFromEnv } from './kv-upstash.ts';
 import { Store } from './store.ts';
+
+/**
+ * Le stockage n'est pas utilisable. Sur Vercel, le disque du projet est en
+ * lecture seule et /tmp est éphémère : sans base Redis, tout serait perdu au
+ * rechargement suivant. Mieux vaut une erreur visible qu'une perte silencieuse.
+ */
+export class StorageError extends Error {
+  name = 'StorageError';
+}
 
 declare global {
   // eslint-disable-next-line no-var
@@ -26,16 +34,14 @@ export function getStore(): Store {
     return globalThis.__vestiaireStore;
   }
 
-  let dir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
   if (process.env.VERCEL) {
-    // Sur Vercel, le système de fichiers du projet est en lecture seule et /tmp
-    // est éphémère : l'application fonctionne, mais les données seront perdues.
-    dir = path.join(os.tmpdir(), 'vestiaire-data');
-    console.warn(
-      '[vestiaire] Aucune base Upstash Redis configurée : les données ne seront PAS conservées. ' +
-        'Ajoutez « Upstash for Redis » dans l’onglet Storage du projet Vercel.',
+    throw new StorageError(
+      'Aucune base Upstash Redis configurée : les données ne seraient pas conservées. ' +
+        'Ajoutez « Upstash for Redis » dans l’onglet Storage du projet Vercel, puis redéployez.',
     );
   }
+
+  const dir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
   globalThis.__vestiaireStore = new Store(new FileKV(dir));
   return globalThis.__vestiaireStore;
 }

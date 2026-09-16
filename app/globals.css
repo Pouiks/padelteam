@@ -485,6 +485,28 @@ input:focus-visible {
   background: var(--gold-soft);
   border-color: var(--gold);
 }
+.team.out {
+  opacity: 0.6;
+}
+.team-tag {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin: -2px 0 6px;
+}
+.team-tag.warn {
+  color: var(--text);
+}
+.team-tag.warn::before {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--gold);
+  vertical-align: 1px;
+}
 .team-head {
   display: flex;
   justify-content: space-between;
@@ -575,6 +597,94 @@ input:focus-visible {
 }
 .my-status.lost {
   color: var(--muted);
+}
+/* En-tête « Mon équipe » : nom à gauche, défaites à droite. */
+.my-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.lives {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--accent);
+  white-space: nowrap;
+}
+.lives.last {
+  background: var(--warn-soft);
+  color: var(--text);
+}
+
+/* Numéro de terrain : l'information qu'on cherche des yeux en arrivant. */
+.court {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  white-space: nowrap;
+  vertical-align: 1px;
+}
+.court.waiting {
+  background: var(--warn-soft);
+  color: var(--text);
+}
+/* Dans un titre de section en capitales, le badge garde sa casse. */
+h3 .court {
+  text-transform: none;
+  letter-spacing: 0;
+}
+.court-block h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+/* Rencontre à jouer, annoncée dans le tableau (les boutons sont en haut de page). */
+.match.upcoming {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 6px 8px;
+}
+.upcoming-where {
+  grid-column: 1 / -1;
+  justify-self: end;
+}
+
+/* Rencontre dont les équipes ne sont pas encore connues. */
+.match.pending {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  border-style: dashed;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+/* Tableau : gagnants, perdants, finale. */
+.bracket-side + .bracket-side {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.bracket-side.final > h3 {
+  color: var(--gold);
+}
+.round h4 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 10px 0 6px;
 }
 .entry-hint {
   margin: 0 0 8px;
@@ -668,6 +778,35 @@ input:focus-visible {
 }
 .plevel b {
   color: var(--text);
+}
+.plevel .link {
+  margin-left: 10px;
+  font-size: 0.875rem;
+}
+
+/* Reprise d'identité : la liste des joueurs devient cliquable. */
+.players.claim li {
+  padding: 0;
+}
+.claim-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.claim-row:disabled {
+  opacity: 0.5;
+}
+.claim-row .pname {
+  font-weight: 600;
 }
 
 .archived {

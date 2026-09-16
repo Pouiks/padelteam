@@ -12,11 +12,13 @@ import type { KV } from './kv.ts';
 import type {
   ArchivedCycle,
   ArchiveSummary,
+  MatchEvent,
   PushSubscriptionRecord,
   State,
   VersionedState,
 } from './types.ts';
 import { cycleEndsAt, isCycleExpired, newCycle } from './cycle.ts';
+import { DEFAULT_COURTS } from './constants.ts';
 
 const KEYS = {
   current: 'vestiaire:current',
@@ -37,6 +39,26 @@ export function emptyState(now: number = Date.now()): State {
   return { cycle: newCycle(now), players: {}, events: {} };
 }
 
+/**
+ * Met un match lu sur disque au format courant. Un match lancé avec l'ancien
+ * tableau à élimination simple (`rounds`, sans `matches`) ne peut pas être
+ * converti : il revient aux inscriptions, inscrits conservés, prêt à être relancé.
+ */
+function normalizeEvent(raw: MatchEvent & { rounds?: unknown }): MatchEvent {
+  const { rounds: _legacy, ...event } = raw;
+  if (!Number.isInteger(event.courts) || event.courts < 1) event.courts = DEFAULT_COURTS;
+  if (!Array.isArray(event.matches)) {
+    event.matches = [];
+    if (event.status !== 'open') {
+      event.status = 'open';
+      event.teams = [];
+      event.subs = [];
+      event.winner = null;
+    }
+  }
+  return event;
+}
+
 /** Remet un état lu sur disque dans une forme sûre (champs manquants, etc.). */
 function normalize(raw: unknown, now: number): State {
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Partial<State>;
@@ -44,10 +66,16 @@ function normalize(raw: unknown, now: number): State {
     obj.cycle && typeof obj.cycle.startedAt === 'string' && typeof obj.cycle.id === 'string'
       ? obj.cycle
       : newCycle(now);
+  const events: State['events'] = {};
+  if (obj.events && typeof obj.events === 'object') {
+    for (const [id, event] of Object.entries(obj.events)) {
+      if (event && typeof event === 'object') events[id] = normalizeEvent(event);
+    }
+  }
   return {
     cycle,
     players: obj.players && typeof obj.players === 'object' ? obj.players : {},
-    events: obj.events && typeof obj.events === 'object' ? obj.events : {},
+    events,
   };
 }
 
@@ -139,6 +167,7 @@ export class Store {
         if (!raw) return null;
         try {
           const a = JSON.parse(raw) as ArchivedCycle;
+          // Les archives gardent leur format d'origine (ancien tableau compris).
           return {
             id: a.cycle.id,
             startedAt: a.cycle.startedAt,

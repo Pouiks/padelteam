@@ -1,10 +1,16 @@
 'use client';
-/** Onglet Joueurs : tout le monde, avec son niveau. */
+/** Onglet Joueurs : tout le monde, avec son niveau. Chacun modifie le sien. */
 import type { VersionedState } from '@/lib/types';
 import { LEVEL_LABELS } from '@/lib/constants';
 import { plural } from '@/lib/client/format';
 
-export default function Players({ state, me }: { state: VersionedState; me: string }) {
+interface Props {
+  state: VersionedState;
+  me: string;
+  onEdit: () => void;
+}
+
+export default function Players({ state, me, onEdit }: Props) {
   const players = Object.entries(state.players)
     .map(([id, p]) => ({ id, ...p }))
     .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
@@ -23,10 +29,19 @@ export default function Players({ state, me }: { state: VersionedState; me: stri
             </span>
             <span className="plevel">
               <b>{p.level}</b> {LEVEL_LABELS[p.level] ?? ''}
+              {p.id === me && (
+                <button className="link" type="button" onClick={onEdit}>
+                  modifier
+                </button>
+              )}
             </span>
           </li>
         ))}
       </ul>
+      <p className="muted small">
+        Le niveau sert uniquement à répartir les équipes ; il se change à tout moment et vaut pour
+        les prochains matchs.
+      </p>
     </section>
   );
 }

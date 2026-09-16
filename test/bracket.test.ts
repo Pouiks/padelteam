@@ -1,18 +1,20 @@
-/** Tests du tableau à élimination directe (node --test). */
+/** Tests du tournoi à double élimination (node --test). */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  advance,
   BracketError,
-  createFirstRound,
-  latestMatchOf,
-  roundLabel,
+  championOf,
+  createBracket,
+  lossesOf,
+  matchLabel,
+  outcomes,
+  progress,
   setResult,
+  settle,
   teamIndexOf,
-  totalRounds,
-  winnerOf,
+  teamStatus,
 } from '../lib/bracket.ts';
-import type { Match, MatchEvent } from '../lib/types.ts';
+import type { MatchEvent } from '../lib/types.ts';
 
 function rng(seed: number): () => number {
   let a = seed >>> 0;
@@ -25,11 +27,18 @@ function rng(seed: number): () => number {
   };
 }
 
-/** Match lancé avec `nTeams` équipes d'un joueur (« j0 », « j1 », …). */
-function makeEvent(nTeams: number, seed = 1): MatchEvent {
-  const event: MatchEvent = {
+interface Setup {
+  seed?: number;
+  courts?: number;
+  reset?: boolean;
+}
+
+/** Tournoi lancé avec `nTeams` équipes d'un joueur (« j0 », « j1 », …). */
+function makeEvent(nTeams: number, { seed = 1, courts = 2, reset = true }: Setup = {}): MatchEvent {
+  return settle({
     title: 'test',
     teamSize: 1,
+    courts,
     createdBy: 'p',
     createdAt: new Date(0).toISOString(),
     status: 'running',
@@ -39,196 +48,378 @@ function makeEvent(nTeams: number, seed = 1): MatchEvent {
       members: [{ id: `j${i}`, name: `Joueur ${i}`, level: 3 }],
     })),
     subs: [],
-    rounds: [createFirstRound(nTeams, rng(seed))],
+    matches: createBracket(nTeams, rng(seed), { reset }),
     winner: null,
-  };
-  return advance(event);
+  });
 }
 
-/** Vainqueur d'une rencontre selon un score, pratique pour écrire les tests. */
-function score(event: MatchEvent, round: number, match: number, sa: number, sb: number): MatchEvent {
-  return setResult(event, round, match, { sa, sb });
+/** Rencontres prêtes à jouer, avec leurs deux équipes. */
+function ready(event: MatchEvent): Array<{ i: number; a: number; b: number }> {
+  return outcomes(event.matches)
+    .map((o, i) => ({ o, i }))
+    .filter(({ o }) => o.state === 'ready')
+    .map(({ o, i }) => ({ i, a: o.a as number, b: o.b as number }));
 }
 
-test('2 équipes : une seule rencontre, pas d’exempt', () => {
-  const round = createFirstRound(2, rng(1));
-  assert.equal(round.length, 1);
-  assert.notEqual(round[0].b, null);
-  assert.deepEqual([round[0].a, round[0].b].sort(), [0, 1]);
-  assert.equal(round[0].winner, null);
+/** Joue le tournoi jusqu'au bout ; `pick` choisit le vainqueur de chaque rencontre. */
+function playOut(event: MatchEvent, pick: (a: number, b: number, i: number) => number): number {
+  let played = 0;
+  for (;;) {
+    const next = ready(event)[0];
+    if (!next) return played;
+    setResult(event, next.i, { winner: pick(next.a, next.b, next.i) });
+    played++;
+    assert.ok(played < 200, 'le tournoi doit se terminer');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Structure
+// ---------------------------------------------------------------------------
+
+test('4 équipes : 2 tours de gagnants, 2 de perdants, grande finale et revanche', () => {
+  const event = makeEvent(4);
+  const shape = event.matches.map((m) => `${m.side}:${m.round}@${m.stage}`);
+  assert.deepEqual(shape, [
+    'winners:0@0',
+    'winners:0@0',
+    'winners:1@1',
+    'losers:0@1',
+    'losers:1@2',
+    'final:0@3',
+    'final:1@4',
+  ]);
+  assert.equal(event.matches[6].reset, true);
 });
 
-test('3 équipes : tableau de 4, un exempt, chaque équipe placée une fois', () => {
-  const round = createFirstRound(3, rng(1));
-  assert.equal(round.length, 2);
-  assert.equal(round.filter((m) => m.b === null).length, 1);
-  const ids = round.flatMap((m) => [m.a, m.b]).filter((x) => x !== null).sort();
-  assert.deepEqual(ids, [0, 1, 2]);
+test('4 équipes, 2 terrains : les deux premiers tours occupent les deux terrains', () => {
+  const event = makeEvent(4);
+
+  const first = ready(event);
+  assert.equal(first.length, 2, 'tour 1 : deux rencontres');
+  assert.deepEqual(first.map(({ i }) => event.matches[i].court).sort(), [1, 2]);
+  assert.equal(new Set(first.flatMap((r) => [r.a, r.b])).size, 4, 'les quatre équipes jouent');
+
+  for (const r of first) setResult(event, r.i, { winner: r.a });
+
+  const second = ready(event);
+  assert.equal(second.length, 2, 'tour 2 : finale des gagnants et premier tour des perdants');
+  assert.deepEqual(second.map(({ i }) => event.matches[i].side).sort(), ['losers', 'winners']);
+  assert.deepEqual(second.map(({ i }) => event.matches[i].court).sort(), [1, 2]);
+  assert.equal(new Set(second.flatMap((r) => [r.a, r.b])).size, 4, 'personne ne se repose');
 });
 
-test('5 équipes : tableau de 8, trois exempts, au plus un par rencontre', () => {
-  const round = createFirstRound(5, rng(3));
-  assert.equal(round.length, 4);
-  assert.equal(round.filter((m) => m.b === null).length, 3);
-  const ids = round.flatMap((m) => [m.a, m.b]).filter((x) => x !== null).sort();
-  assert.deepEqual(ids, [0, 1, 2, 3, 4]);
-});
-
-test('6 équipes : les deux exemptés ne se rencontrent pas au tour suivant', () => {
-  const round = createFirstRound(6, rng(2));
-  const byeIndexes = round.map((m, i) => (m.b === null ? i : -1)).filter((i) => i >= 0);
-  assert.deepEqual(byeIndexes, [0, 2]);
+test('refuse moins de deux équipes', () => {
+  assert.throws(() => createBracket(1), BracketError);
+  assert.throws(() => createBracket(0), BracketError);
 });
 
 test('l’ordre des équipes est tiré au sort', () => {
-  const a = createFirstRound(8, rng(1)).map((m) => `${m.a}-${m.b}`).join(',');
-  const b = createFirstRound(8, rng(99)).map((m) => `${m.a}-${m.b}`).join(',');
-  assert.notEqual(a, b);
+  const firstTeam = (seed: number) => {
+    const slot = createBracket(8, rng(seed))[0].a;
+    return slot !== null && 'team' in slot ? slot.team : -1;
+  };
+  assert.ok(new Set([1, 2, 3, 4, 5, 6, 7, 8].map(firstTeam)).size > 1);
 });
 
-test('winnerOf : exempt, vainqueur déclaré, score seul (anciennes archives), rien', () => {
-  assert.equal(winnerOf({ a: 4, b: null, winner: null, sa: null, sb: null }), 4);
-  assert.equal(winnerOf({ a: 1, b: 2, winner: 2, sa: null, sb: null }), 2);
-  assert.equal(winnerOf({ a: 1, b: 2, sa: 3, sb: 5 } as unknown as Match), 2);
-  assert.equal(winnerOf({ a: 1, b: 2, winner: null, sa: null, sb: null }), null);
-});
+// ---------------------------------------------------------------------------
+// La règle : on ne sort qu'à la deuxième défaite
+// ---------------------------------------------------------------------------
 
-test('déclarer le vainqueur sans score suffit à faire avancer le tableau', () => {
-  const event = makeEvent(4);
-  setResult(event, 0, 0, { winner: event.rounds[0][0].a });
-  setResult(event, 0, 1, { winner: event.rounds[0][1].b });
-  assert.equal(event.rounds.length, 2);
-  assert.equal(event.rounds[0][0].sa, null);
-  const final = event.rounds[1][0];
-  assert.equal(final.a, event.rounds[0][0].a);
-  assert.equal(final.b, event.rounds[0][1].b);
-  setResult(event, 1, 0, { winner: final.b });
-  assert.equal(event.status, 'done');
-  assert.equal(event.winner, final.b);
-});
+test('quel que soit le nombre d’équipes et les résultats, on ne sort qu’à la deuxième défaite', () => {
+  for (let nTeams = 2; nTeams <= 9; nTeams++) {
+    for (let seed = 1; seed <= 12; seed++) {
+      const event = makeEvent(nTeams, { seed });
+      const random = rng(seed * 97 + nTeams);
+      playOut(event, (a, b) => (random() < 0.5 ? a : b));
 
-test('avancement par scores : 4 équipes → demi-finales puis finale, puis vainqueur', () => {
-  const event = makeEvent(4);
-  assert.equal(totalRounds(event), 2);
-  assert.equal(event.rounds.length, 1);
-
-  score(event, 0, 0, 3, 1);
-  assert.equal(event.rounds.length, 1, 'le tour suivant attend toutes les rencontres');
-  assert.equal(event.rounds[0][0].winner, event.rounds[0][0].a, 'le vainqueur découle du score');
-
-  score(event, 0, 1, 0, 2);
-  assert.equal(event.rounds.length, 2);
-  const final = event.rounds[1][0];
-  assert.equal(final.a, event.rounds[0][0].a);
-  assert.equal(final.b, event.rounds[0][1].b);
-  assert.equal(event.status, 'running');
-
-  score(event, 1, 0, 5, 4);
-  assert.equal(event.status, 'done');
-  assert.equal(event.winner, final.a);
-});
-
-test('3 équipes : l’exemptée attend directement en finale', () => {
-  const event = makeEvent(3);
-  const bye = event.rounds[0].find((m) => m.b === null)!;
-  const real = event.rounds[0].findIndex((m) => m.b !== null);
-  score(event, 0, real, 1, 0);
-  assert.equal(event.rounds.length, 2);
-  const final = event.rounds[1][0];
-  assert.ok([final.a, final.b].includes(bye.a));
-  assert.ok([final.a, final.b].includes(event.rounds[0][real].a));
-});
-
-test('validation : égalité, négatif, score partiel, vainqueur étranger, score contradictoire, exempt, index inconnus, match non lancé', () => {
-  const event = makeEvent(4);
-  const real = event.rounds[0].findIndex((m) => m.b !== null);
-  const m = event.rounds[0][real];
-  assert.throws(() => score(event, 0, real, 2, 2), BracketError);
-  assert.throws(() => score(event, 0, real, -1, 2), BracketError);
-  assert.throws(() => score(event, 0, real, 1.5, 2), BracketError);
-  assert.throws(() => setResult(event, 0, real, { sa: 1 }), BracketError);
-  assert.throws(() => setResult(event, 0, real, {}), BracketError);
-  assert.throws(() => setResult(event, 0, real, { winner: 99 }), BracketError);
-  assert.throws(() => setResult(event, 0, real, { winner: m.a, sa: 0, sb: 3 }), BracketError);
-  assert.throws(() => setResult(event, 5, 0, { winner: 0 }), BracketError);
-  assert.throws(() => setResult(event, 0, 9, { winner: 0 }), BracketError);
-  const withBye = makeEvent(3);
-  const byeIndex = withBye.rounds[0].findIndex((mm) => mm.b === null);
-  assert.throws(() => setResult(withBye, 0, byeIndex, { winner: withBye.rounds[0][byeIndex].a }), BracketError);
-  const open = { ...makeEvent(4), status: 'open' as const };
-  assert.throws(() => setResult(open, 0, 0, { winner: 0 }), BracketError);
-  assert.equal(event.rounds.length, 1, 'rien n’a bougé');
-});
-
-test('vainqueur et score concordants sont acceptés ensemble', () => {
-  const event = makeEvent(2);
-  const m = event.rounds[0][0];
-  setResult(event, 0, 0, { winner: m.b as number, sa: 2, sb: 6 });
-  assert.equal(event.status, 'done');
-  assert.equal(event.winner, m.b);
-  assert.equal(m.sa, 2);
-});
-
-test('corriger un résultat qui change le vainqueur efface et recalcule la suite', () => {
-  const event = makeEvent(4);
-  score(event, 0, 0, 3, 1);
-  score(event, 0, 1, 2, 0);
-  score(event, 1, 0, 1, 0);
-  assert.equal(event.status, 'done');
-  const oldFinalist = event.rounds[1][0].a;
-
-  setResult(event, 0, 0, { winner: event.rounds[0][0].b as number }); // l'autre équipe gagne finalement
-  assert.equal(event.status, 'running');
-  assert.equal(event.winner, null);
-  assert.equal(event.rounds.length, 2, 'la finale est regénérée');
-  assert.equal(event.rounds[1][0].a, event.rounds[0][0].b);
-  assert.notEqual(event.rounds[1][0].a, oldFinalist);
-  assert.equal(event.rounds[1][0].winner, null);
-  assert.equal(event.rounds[0][0].sa, null, 'l’ancien score est effacé');
-});
-
-test('corriger un score sans changer le vainqueur conserve la suite', () => {
-  const event = makeEvent(4);
-  score(event, 0, 0, 3, 1);
-  score(event, 0, 1, 2, 0);
-  score(event, 1, 0, 1, 0);
-  score(event, 0, 0, 4, 1);
-  assert.equal(event.status, 'done');
-  assert.equal(event.rounds[1][0].sa, 1);
-  assert.equal(event.rounds[0][0].sa, 4);
-});
-
-test('teamIndexOf et latestMatchOf : suivre son équipe jusqu’à la finale', () => {
-  const event = makeEvent(4);
-  assert.equal(teamIndexOf(event, 'j2'), 2);
-  assert.equal(teamIndexOf(event, 'inconnu'), null);
-
-  const first = latestMatchOf(event, 2)!;
-  assert.equal(first.round, 0);
-  assert.ok([first.match.a, first.match.b].includes(2));
-
-  score(event, 0, 0, 3, 1);
-  score(event, 0, 1, 3, 1);
-  const finalists = [event.rounds[1][0].a, event.rounds[1][0].b];
-  for (const team of [0, 1, 2, 3]) {
-    const located = latestMatchOf(event, team)!;
-    assert.equal(located.round, finalists.includes(team) ? 1 : 0);
+      const out = outcomes(event.matches);
+      const champion = championOf(event.matches, out);
+      assert.notEqual(champion, null, `${nTeams} équipes, graine ${seed} : un champion`);
+      assert.equal(event.status, 'done');
+      assert.equal(event.winner, champion);
+      for (let t = 0; t < nTeams; t++) {
+        const losses = lossesOf(out, t);
+        if (t === champion) assert.ok(losses <= 1, 'le champion a au plus une défaite');
+        else assert.equal(losses, 2, `${nTeams} équipes, graine ${seed} : T${t} sort à sa deuxième défaite`);
+      }
+    }
   }
 });
 
-test('libellés des tours', () => {
-  assert.equal(roundLabel(0, 1), 'Finale');
-  assert.equal(roundLabel(0, 2), 'Demi-finales');
-  assert.equal(roundLabel(1, 2), 'Finale');
-  assert.equal(roundLabel(0, 3), 'Quarts de finale');
-  assert.equal(roundLabel(0, 4), 'Tour 1');
-  assert.equal(roundLabel(1, 4), 'Quarts de finale');
-  assert.equal(roundLabel(3, 4), 'Finale');
+test('une équipe ne joue jamais deux rencontres à la fois, ni contre elle-même', () => {
+  for (let nTeams = 2; nTeams <= 9; nTeams++) {
+    const event = makeEvent(nTeams, { seed: nTeams, courts: 8 });
+    const random = rng(nTeams);
+    for (;;) {
+      const now = ready(event);
+      if (now.length === 0) break;
+      const teams = now.flatMap((r) => [r.a, r.b]);
+      assert.equal(new Set(teams).size, teams.length, `${nTeams} équipes : pas de doublon simultané`);
+      const r = now[Math.floor(random() * now.length)];
+      setResult(event, r.i, { winner: random() < 0.5 ? r.a : r.b });
+    }
+  }
 });
 
-test('totalRounds : 8 équipes → 3 tours, 5 équipes → 3 tours, 2 équipes → 1 tour', () => {
-  assert.equal(totalRounds(makeEvent(8)), 3);
-  assert.equal(totalRounds(makeEvent(5)), 3);
-  assert.equal(totalRounds(makeEvent(2)), 1);
-  assert.equal(totalRounds({ rounds: [] }), 0);
+test('8 équipes : les battus qui arrivent chez les perdants ne retrouvent pas aussitôt leur ancien adversaire', () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const event = makeEvent(8, { seed, courts: 8 });
+    const random = rng(seed);
+    const met = new Set<string>();
+    const key = (x: number, y: number) => (x < y ? `${x}-${y}` : `${y}-${x}`);
+    for (;;) {
+      const now = ready(event);
+      if (now.length === 0) break;
+      for (const r of now) {
+        const m = event.matches[r.i];
+        if (m.side === 'losers' && m.round === 1) {
+          assert.ok(!met.has(key(r.a, r.b)), `graine ${seed} : revanche immédiate évitée`);
+        }
+      }
+      const r = now[0];
+      met.add(key(r.a, r.b));
+      setResult(event, r.i, { winner: random() < 0.5 ? r.a : r.b });
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Grande finale
+// ---------------------------------------------------------------------------
+
+test('le tableau des gagnants remporte la grande finale : pas de revanche', () => {
+  const event = makeEvent(4);
+  let finalist = -1;
+  playOut(event, (a, b, i) => {
+    const m = event.matches[i];
+    if (m.side === 'final') {
+      const o = outcomes(event.matches)[i];
+      finalist = o.a as number; // équipe venue du tableau des gagnants
+      return finalist;
+    }
+    return Math.min(a, b);
+  });
+  const out = outcomes(event.matches);
+  assert.equal(out[6].state, 'skipped');
+  assert.equal(championOf(event.matches), finalist);
+  assert.equal(lossesOf(out, finalist), 0);
+  assert.equal(event.status, 'done');
+  assert.deepEqual(progress(event.matches), { played: 6, total: 6 });
+});
+
+test('le tableau des perdants remporte la grande finale : revanche, puis champion', () => {
+  const event = makeEvent(4);
+  // Jusqu'à la grande finale : l'équipe d'index le plus bas gagne.
+  for (;;) {
+    const next = ready(event)[0];
+    if (!next || event.matches[next.i].side === 'final') break;
+    setResult(event, next.i, { winner: Math.min(next.a, next.b) });
+  }
+  const gf = ready(event)[0];
+  assert.equal(gf.i, 5);
+  const fromWinners = gf.a;
+  const fromLosers = gf.b;
+  assert.equal(lossesOf(outcomes(event.matches), fromWinners), 0);
+  assert.equal(lossesOf(outcomes(event.matches), fromLosers), 1);
+  assert.deepEqual(progress(event.matches), { played: 5, total: 6 }, 'la revanche hypothétique ne compte pas');
+
+  setResult(event, 5, { winner: fromLosers });
+  assert.equal(event.status, 'running', 'une défaite chacun : ce n’est pas fini');
+  assert.equal(championOf(event.matches), null);
+  const rematch = ready(event);
+  assert.equal(rematch.length, 1);
+  assert.equal(rematch[0].i, 6);
+  assert.deepEqual(progress(event.matches), { played: 6, total: 7 }, 'la revanche compte dès qu’elle a lieu');
+
+  setResult(event, 6, { winner: fromWinners });
+  assert.equal(event.status, 'done');
+  assert.equal(event.winner, fromWinners);
+  assert.equal(lossesOf(outcomes(event.matches), fromLosers), 2);
+});
+
+test('sans revanche : la grande finale est décisive', () => {
+  const event = makeEvent(4, { reset: false });
+  assert.equal(event.matches.length, 6);
+  for (;;) {
+    const next = ready(event)[0];
+    if (!next || event.matches[next.i].side === 'final') break;
+    setResult(event, next.i, { winner: Math.min(next.a, next.b) });
+  }
+  const gf = ready(event)[0];
+  setResult(event, gf.i, { winner: gf.b });
+  assert.equal(event.status, 'done');
+  assert.equal(event.winner, gf.b);
+  const status = teamStatus(event, gf.a);
+  assert.deepEqual(status, { kind: 'eliminated', place: 2, losses: 1 });
+});
+
+// ---------------------------------------------------------------------------
+// Exempts
+// ---------------------------------------------------------------------------
+
+test('3 équipes : l’exempt passe sans jouer et le tournoi va au bout', () => {
+  const event = makeEvent(3, { seed: 5 });
+  const out = outcomes(event.matches);
+  const bye = out.findIndex((o) => o.state === 'walkover');
+  assert.notEqual(bye, -1);
+  assert.throws(() => setResult(event, bye, { winner: out[bye].a as number }), /exemptée/);
+
+  assert.equal(ready(event).length, 1, 'une seule vraie rencontre au premier tour');
+  playOut(event, (a, b) => Math.max(a, b));
+  assert.equal(event.status, 'done');
+});
+
+// ---------------------------------------------------------------------------
+// Ce que voit chaque équipe
+// ---------------------------------------------------------------------------
+
+test('teamStatus : à jouer, en attente d’adversaire, dans le tableau des perdants, éliminée, championne', () => {
+  const event = makeEvent(4);
+  const [m0, m1] = ready(event);
+
+  // Tout le monde joue au premier tour, sur un terrain.
+  for (const t of [m0.a, m0.b, m1.a, m1.b]) {
+    const s = teamStatus(event, t);
+    assert.equal(s.kind, 'play');
+    assert.ok(s.kind === 'play' && s.court !== null);
+  }
+
+  // m0 est joué : le vainqueur attend celui de m1, le battu attend le battu de m1.
+  setResult(event, m0.i, { winner: m0.a });
+  assert.deepEqual(teamStatus(event, m0.a), {
+    kind: 'wait',
+    match: 2,
+    source: { match: m1.i, take: 'winner' },
+    losses: 0,
+  });
+  assert.deepEqual(teamStatus(event, m0.b), {
+    kind: 'wait',
+    match: 3,
+    source: { match: m1.i, take: 'loser' },
+    losses: 1,
+  });
+
+  // m1 est joué : le battu de m0 rejoue aussitôt, dans le tableau des perdants.
+  setResult(event, m1.i, { winner: m1.a });
+  const back = teamStatus(event, m0.b);
+  assert.equal(back.kind, 'play');
+  assert.ok(back.kind === 'play' && back.opponent === m1.b && event.matches[back.match].side === 'losers');
+
+  // Deuxième défaite : éliminée, dernière place.
+  setResult(event, 3, { winner: m1.b });
+  assert.deepEqual(teamStatus(event, m0.b), { kind: 'eliminated', place: 4, losses: 2 });
+
+  playOut(event, (a, b) => Math.min(a, b));
+  const places = [0, 1, 2, 3].map((t) => {
+    const s = teamStatus(event, t);
+    return s.kind === 'champion' ? 1 : s.kind === 'eliminated' ? s.place : -1;
+  });
+  assert.deepEqual([...places].sort(), [1, 2, 3, 4], 'classement final complet et sans ex æquo');
+});
+
+test('teamIndexOf : équipe d’un joueur, null pour un spectateur', () => {
+  const event = makeEvent(4);
+  assert.equal(teamIndexOf(event, 'j2'), 2);
+  assert.equal(teamIndexOf(event, 'inconnu'), null);
+});
+
+// ---------------------------------------------------------------------------
+// Corrections et validation
+// ---------------------------------------------------------------------------
+
+test('corriger un vainqueur efface ce qui en dépendait ; corriger un score seul ne touche à rien', () => {
+  const event = makeEvent(4);
+  const [m0, m1] = ready(event);
+  setResult(event, m0.i, { winner: m0.a, sa: 6, sb: 2 });
+  setResult(event, m1.i, { winner: m1.a });
+  setResult(event, 2, { winner: m0.a }); // finale des gagnants
+  setResult(event, 3, { winner: m0.b }); // premier tour des perdants
+
+  // Simple correction de score : la suite reste.
+  setResult(event, m0.i, { winner: m0.a, sa: 6, sb: 4 });
+  assert.equal(event.matches[2].winner, m0.a);
+  assert.equal(event.matches[3].winner, m0.b);
+
+  // Le vainqueur change : finale des gagnants et tour des perdants sont à rejouer.
+  setResult(event, m0.i, { winner: m0.b });
+  assert.equal(event.matches[2].winner, null);
+  assert.equal(event.matches[3].winner, null);
+  const out = outcomes(event.matches);
+  assert.equal(out[2].state, 'ready');
+  assert.equal(out[2].a, m0.b);
+  assert.equal(out[3].a, m0.a, 'l’ancien vainqueur passe chez les perdants');
+});
+
+test('validation : rencontre non prête, égalité, négatif, score partiel, vainqueur étranger, contradiction, index inconnu, match non lancé', () => {
+  const event = makeEvent(4);
+  const [m0] = ready(event);
+  const errors: Array<[() => unknown, RegExp]> = [
+    [() => setResult(event, 2, { winner: 0 }), /pas encore connues/],
+    [() => setResult(event, m0.i, { sa: 3, sb: 3 }), /Égalité/],
+    [() => setResult(event, m0.i, { sa: -1, sb: 2 }), /positifs/],
+    [() => setResult(event, m0.i, { sa: 3 }), /deux scores/],
+    [() => setResult(event, m0.i, {}), /qui a gagné/],
+    [() => setResult(event, m0.i, { winner: 99 }), /l’une des deux équipes/],
+    [() => setResult(event, m0.i, { winner: m0.a, sa: 1, sb: 6 }), /contredit/],
+    [() => setResult(event, 42, { winner: 0 }), /inconnue/],
+    [() => setResult({ ...event, status: 'open' }, m0.i, { winner: m0.a }), /pas encore été lancé/],
+  ];
+  for (const [fn, message] of errors) assert.throws(fn, message);
+
+  // Revanche inutile : la déclarer est refusé.
+  playOut(event, (a, b, i) => (event.matches[i].side === 'final' ? (outcomes(event.matches)[i].a as number) : a));
+  assert.throws(() => setResult(event, 6, { winner: 0 }), /revanche/);
+});
+
+test('vainqueur et score concordants sont acceptés ensemble', () => {
+  const event = makeEvent(4);
+  const [m0] = ready(event);
+  setResult(event, m0.i, { winner: m0.b, sa: 2, sb: 6 });
+  assert.equal(event.matches[m0.i].winner, m0.b);
+});
+
+// ---------------------------------------------------------------------------
+// Terrains
+// ---------------------------------------------------------------------------
+
+test('terrains : jamais plus de rencontres que de terrains, et personne ne change de terrain en cours de match', () => {
+  for (const courts of [1, 2, 3]) {
+    const event = makeEvent(8, { seed: courts, courts });
+    const random = rng(courts);
+    const seen = new Map<number, number>(); // rencontre → terrain attribué
+    for (;;) {
+      const now = ready(event);
+      if (now.length === 0) break;
+      const assigned = now.filter(({ i }) => event.matches[i].court !== null);
+      const numbers = assigned.map(({ i }) => event.matches[i].court);
+      assert.ok(assigned.length <= courts, `${courts} terrain(s) : pas de surréservation`);
+      assert.equal(new Set(numbers).size, numbers.length, 'deux rencontres jamais sur le même terrain');
+      assert.equal(assigned.length, Math.min(courts, now.length), 'aucun terrain libre laissé vide');
+      for (const { i } of assigned) {
+        const court = event.matches[i].court as number;
+        if (seen.has(i)) assert.equal(seen.get(i), court, 'terrain stable');
+        seen.set(i, court);
+      }
+      // On termine en priorité une rencontre qui a un terrain, comme dans la vraie vie.
+      const r = assigned[Math.floor(random() * assigned.length)];
+      setResult(event, r.i, { winner: random() < 0.5 ? r.a : r.b });
+    }
+  }
+});
+
+test('libellés des rencontres', () => {
+  const event = makeEvent(8);
+  const labels = new Set(event.matches.map((_, i) => matchLabel(event.matches, i)));
+  for (const label of [
+    'Gagnants · tour 1',
+    'Gagnants · tour 2',
+    'Finale des gagnants',
+    'Perdants · tour 1',
+    'Finale des perdants',
+    'Grande finale',
+    'Revanche de la grande finale',
+  ]) {
+    assert.ok(labels.has(label), label);
+  }
 });

@@ -25,9 +25,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const push = useCallback<PushToast>((message, kind = 'error') => {
     const id = nextId.current++;
     setToasts((list) => [...list.slice(-3), { id, message, kind }]);
+    // Les infos (« À vous ! Terrain 2… ») arrivent sans qu'on les attende : on
+    // laisse le temps de les lire.
     setTimeout(
       () => setToasts((list) => list.filter((t) => t.id !== id)),
-      kind === 'error' ? 5000 : 3000,
+      kind === 'ok' ? 3000 : kind === 'error' ? 5000 : 7000,
     );
   }, []);
 

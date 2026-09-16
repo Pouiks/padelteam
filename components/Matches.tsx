@@ -2,9 +2,17 @@
 /** Onglet Matchs : compte à rebours du cycle, création, liste des matchs. */
 import { useEffect, useState, type FormEvent } from 'react';
 import type { MatchEvent, VersionedState } from '@/lib/types';
-import { MAX_TEAM_SIZE, MAX_TITLE_LENGTH, MIN_TEAM_SIZE, STATUS_LABELS } from '@/lib/constants';
+import {
+  DEFAULT_COURTS,
+  MAX_COURTS,
+  MAX_TEAM_SIZE,
+  MAX_TITLE_LENGTH,
+  MIN_TEAM_SIZE,
+  STATUS_LABELS,
+} from '@/lib/constants';
 import { cycleEndsAt, defaultTitle } from '@/lib/cycle';
-import { latestMatchOf, roundLabel, teamIndexOf, totalRounds, winnerOf } from '@/lib/bracket';
+import { progress, teamIndexOf } from '@/lib/bracket';
+import { myStatus, placeText } from '@/lib/client/tournament';
 import { api } from '@/lib/client/api';
 import { countdownText, plural } from '@/lib/client/format';
 import { useToast } from './Toasts';
@@ -19,6 +27,7 @@ interface Props {
 
 const STATUS_ORDER = { open: 0, running: 1, done: 2 } as const;
 const SIZE_PRESETS = [2, 3, 4, 5, 6, 7];
+const COURT_PRESETS = [1, 2, 3, 4];
 
 export default function Matches({ state, me, apply, onOpen }: Props) {
   const [showCreate, setShowCreate] = useState(false);
@@ -90,7 +99,9 @@ interface CreateProps {
 function CreateForm({ me, apply, onClose, onCreated }: CreateProps) {
   const toast = useToast();
   const [title, setTitle] = useState('');
-  const [teamSize, setTeamSize] = useState('5');
+  // Padel : on joue à deux.
+  const [teamSize, setTeamSize] = useState('2');
+  const [courts, setCourts] = useState(DEFAULT_COURTS);
   const [join, setJoin] = useState(true);
   const [busy, setBusy] = useState(false);
   const placeholder = defaultTitle();
@@ -106,6 +117,7 @@ function CreateForm({ me, apply, onClose, onCreated }: CreateProps) {
       const res = await api<{ id: string; state: VersionedState }>('POST', '/api/events', {
         title: title.trim() || placeholder,
         teamSize: size,
+        courts,
         join,
         playerId: me,
       });
@@ -160,6 +172,23 @@ function CreateForm({ me, apply, onClose, onCreated }: CreateProps) {
           />
         </div>
       </div>
+      <div className="field">
+        <span>Terrains disponibles</span>
+        <div className="presets">
+          {COURT_PRESETS.filter((n) => n <= MAX_COURTS).map((n) => (
+            <button
+              key={n}
+              type="button"
+              className="preset"
+              aria-pressed={courts === n}
+              onClick={() => setCourts(n)}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+        <small className="muted">Autant de rencontres jouées en même temps.</small>
+      </div>
       <label className="check">
         <input type="checkbox" checked={join} onChange={(e) => setJoin(e.target.checked)} />
         Je m’inscris directement
@@ -197,21 +226,27 @@ function EventCard({ event, me, creatorName, onOpen }: CardProps) {
     line = `${plural(n, 'inscrit')} · équipes de ${event.teamSize}`;
     if (n < needed) line += ` · encore ${plural(needed - n, 'joueur')} pour lancer`;
   } else if (event.status === 'running') {
-    const current = event.rounds.length - 1;
-    line = `${event.teams.length} équipes · ${roundLabel(current, totalRounds(event))} en cours`;
+    const { played, total } = progress(event.matches);
+    line = `${event.teams.length} équipes · ${played}/${total} rencontres jouées`;
   } else {
     line = event.winner !== null ? `🏆 ${event.teams[event.winner].name}` : 'Terminé';
   }
 
-  // Ma prochaine rencontre à jouer, si mon équipe est encore en lice.
+  // Où en est mon équipe, en une ligne.
   let myLine: string | null = null;
-  if (event.status === 'running') {
-    const myTeam = teamIndexOf(event, me);
-    const located = myTeam !== null ? latestMatchOf(event, myTeam) : null;
-    if (myTeam !== null && located && located.match.b !== null && winnerOf(located.match) === null) {
-      const opponent = event.teams[located.match.a === myTeam ? located.match.b : located.match.a].name;
-      myLine = `À jouer : ${event.teams[myTeam].name} vs ${opponent} · ${roundLabel(located.round, totalRounds(event))}`;
-    }
+  const status = myStatus(event, teamIndexOf(event, me));
+  if (status?.kind === 'play') {
+    const opponent = event.teams[status.opponent].name;
+    myLine =
+      status.court !== null
+        ? `⚔ À vous : terrain ${status.court} contre les ${opponent}`
+        : `⚔ Contre les ${opponent}, en attente d’un terrain`;
+  } else if (status?.kind === 'wait') {
+    myLine = '⏳ En attente de votre adversaire';
+  } else if (status?.kind === 'eliminated' && event.status === 'running') {
+    myLine = `Éliminés · ${placeText(status.place)}`;
+  } else if (status?.kind === 'champion') {
+    myLine = '🏆 Vous avez gagné';
   }
 
   return (
@@ -235,7 +270,7 @@ function EventCard({ event, me, creatorName, onOpen }: CardProps) {
         {line}
         {creatorName ? ` · par ${creatorName}` : ''}
       </p>
-      {myLine ? <p className="mine-flag">⚔ {myLine}</p> : mine && <p className="mine-flag">✓ J’y participe</p>}
+      {myLine ? <p className="mine-flag">{myLine}</p> : mine && <p className="mine-flag">✓ J’y participe</p>}
     </article>
   );
 }

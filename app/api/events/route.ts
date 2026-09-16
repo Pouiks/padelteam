@@ -1,12 +1,12 @@
 /**
- * POST /api/events  { title?, teamSize, join, playerId }
+ * POST /api/events  { title?, teamSize, courts?, join, playerId }
  * Crée un match dans le cycle courant, puis prévient les abonnés push.
  */
 import crypto from 'node:crypto';
 import { getStore } from '@/lib/db';
 import { defaultTitle } from '@/lib/cycle';
 import { broadcast, newEventPayload } from '@/lib/push';
-import { bad, cleanId, cleanTeamSize, cleanTitle, handle, json, readJson } from '@/lib/api';
+import { bad, cleanCourts, cleanId, cleanTeamSize, cleanTitle, handle, json, readJson } from '@/lib/api';
 import type { MatchEvent } from '@/lib/types';
 
 function newEventId(): string {
@@ -18,6 +18,7 @@ export async function POST(req: Request): Promise<Response> {
     const body = await readJson(req);
     const playerId = cleanId(body.playerId, 'de joueur');
     const teamSize = cleanTeamSize(body.teamSize);
+    const courts = cleanCourts(body.courts);
     const title = cleanTitle(body.title);
     const join = body.join === true || body.join === 'true';
 
@@ -30,13 +31,14 @@ export async function POST(req: Request): Promise<Response> {
       const event: MatchEvent = {
         title: title ?? defaultTitle(now, process.env.APP_TIMEZONE || 'Europe/Paris'),
         teamSize,
+        courts,
         createdBy: playerId,
         createdAt: now.toISOString(),
         status: 'open',
         participants: join ? [{ id: playerId, name: player.name, level: player.level }] : [],
         teams: [],
         subs: [],
-        rounds: [],
+        matches: [],
         winner: null,
       };
       s.events[id] = event;

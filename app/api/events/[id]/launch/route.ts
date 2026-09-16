@@ -1,10 +1,11 @@
 /**
  * POST /api/events/:id/launch
- * Forme les équipes équilibrées et le tableau ; le match passe en `running`.
+ * Forme les équipes équilibrées et le tableau à double élimination ; le match
+ * passe en `running` et les premières rencontres reçoivent leur terrain.
  */
 import { getStore } from '@/lib/db';
 import { balance } from '@/lib/balance';
-import { advance, createFirstRound } from '@/lib/bracket';
+import { createBracket, settle } from '@/lib/bracket';
 import { bad, cleanId, getEvent, handle, json } from '@/lib/api';
 
 export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
@@ -22,10 +23,9 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
       const { teams, subs } = balance(event.participants, event.teamSize);
       event.teams = teams;
       event.subs = subs;
-      event.rounds = [createFirstRound(teams.length)];
-      event.winner = null;
+      event.matches = createBracket(teams.length);
       event.status = 'running';
-      advance(event);
+      settle(event);
     });
     return json({ ok: true, state });
   });
